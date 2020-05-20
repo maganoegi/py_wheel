@@ -1,8 +1,9 @@
 
 
-from PyQt5.QtWidgets import QWidget, QGroupBox, QMessageBox, QGroupBox, QMainWindow, QLabel, QApplication, QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton, QSlider, QFileDialog, QRadioButton, QLineEdit
-from PyQt5.QtGui import QPainter, QColor, QPen, QPixmap, QImage, QFont
+from PyQt5.QtWidgets import QWidget, QMainWindow, QLabel, QApplication, QVBoxLayout, QHBoxLayout, QSlider
+from PyQt5.QtGui import QPainter, QColor, QPixmap, QImage, QFont
 from PyQt5.QtCore import Qt, QSize, QTimer
+
 from Display import Display
 
 import sys
@@ -10,6 +11,11 @@ import time
 
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+from matplotlib.backends.backend_qt4agg import FigureCanvasQTAgg as FigureCanvas
+
+import random
 
 class MainWindow(QMainWindow):
     def __init__(self, port = 0):
@@ -37,7 +43,12 @@ class MainWindow(QMainWindow):
         self.parameters = {}
         for i in range(2):
             for index, name in enumerate(self.slider_names):
-                self.parameters[f"{name} {i + 1}"]  = self.slider_minmax_default[index][index%2]
+                self.parameters[f"{name} {i + 1}"]  = self.slider_default_max[index][index%2]
+       
+        self.NB_SHOWN = 100
+        self.angles = [0] * self.NB_SHOWN
+        self.t = list(range(self.NB_SHOWN)) 
+        # self.y = []
 
     def process_frame(self):
 
@@ -65,13 +76,24 @@ class MainWindow(QMainWindow):
         left = cv2.bitwise_and(smaller,smaller, mask=left_mask)
         right = cv2.bitwise_and(smaller,smaller, mask=right_mask)
 
+        # num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(cv2.cvtColor(left, cv2.COLOR_RGB2GRAY), 4, cv2.CV_32S)
+        # # num_labels, labels = cv2.connectedComponents(cv2.cvtColor(left, cv2.COLOR_RGB2GRAY))
+        # areas = stats[:,4]
+        # label_numbers = [i for i in range(num_labels)]
+        # labels_ranked_by_area = sorted(zip(areas, label_numbers))
+        # highest_area_label = labels_ranked_by_area[-2][1] # because the biggest one is the BG
+
+        # brain = np.where(labels == highest_area_label, labels, 0)
+        # brain = np.uint8(brain) # dilatation doesnt support uint32 produced before 
+        # print(num_labels)
+
         both = cv2.resize(cv2.bitwise_or(left, right), self.big_display_dims, interpolation=cv2.INTER_LINEAR)
 
+        self.build_plot()
 
+        self.angle_canvas.draw()
 
         self.feed_display.render(normal)
-
-        self.angle_display.render(normal)
 
         self.object_both_display.render(both)
 
@@ -79,6 +101,17 @@ class MainWindow(QMainWindow):
 
         self.object_2_display.render(right)
     
+    def build_plot(self):
+
+        value = random.randint(0, 10)
+        value = random.randint(0, 10)
+        self.angles.append(value)
+        self.t.append(len(self.angles))
+        
+        self.ax.clear()
+        self.ax.plot(self.t[-1*self.NB_SHOWN:], self.angles[-1*self.NB_SHOWN:], '-')
+        for tick in self.ax.get_xticklabels():
+            tick.set_rotation(45)
 
 
     def init_UIElements(self):
@@ -90,9 +123,6 @@ class MainWindow(QMainWindow):
         self.small_display_dims = tuple([int(dim * scaling_factor) for dim in self.big_display_dims])
 
         self.letterColor = "cornflowerblue"
-        fontSize = 20
-        font = "Roboto"
-        fontWeight = QFont.Bold
 
         self.feed_display = Display(*self.big_display_dims)
         self.angle_display = Display(*self.big_display_dims)
@@ -109,35 +139,72 @@ class MainWindow(QMainWindow):
             "sat max"
         ]
 
-        self.slider_minmax_default = [
+        self.slider_default_max = [
             (0, 255),
+            (255, 255),
             (0, 255),
+            (255, 255),
             (0, 255),
-            (0, 255),
-            (0, 255),
-            (0, 255)
+            (255, 255)
         ]
 
+
         self.slider_labels = [self.build_label(name) for name in (self.slider_names + self.slider_names)]
-        self.sliders = [self.build_slider(*minmax) for minmax in (self.slider_minmax_default + self.slider_minmax_default)]
+        self.sliders = [self.build_slider(*current_max) for current_max in (self.slider_default_max + self.slider_default_max)]
+        grad = """QSlider::sub-page:horizontal {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #FF0000, stop:0.2 #fff200 stop:0.4 #00FF00, stop:0.6 #00ffeb stop:0.8 #0000FF, stop:1 #ff00f2);
+            }
+            QSlider::add-page:horizontal {
+                background: lightgray;
+                }
+            """
+        # self.sliders[0].setStyleSheet(grad)
+        # self.sliders[0].setStyleSheet(grad)
+#             """QSlider::groove:horizontal {
+#     border: 1px solid red;
+#     height: 6px;
+#     margin: 2px 0;
+# border-radius: 3px;
+# }
+# QSlider::handle:horizontal {
+#     background: red;
+#     border: 1px solid red;
+#     width: 3px;
+#     margin: -8px 0;
+#     border-radius: 1px;
+# }
+# QSlider::add-page:horizontal {
+#     background: lightgray;
+# }
+# QSlider::sub-page:horizontal {
+#     background: red;
+# }""") 
+
+        self.figure = plt.figure(figsize=(10,5))
+        self.ax = self.figure.add_subplot(111)
+
+        self.angle_canvas = FigureCanvas(self.figure)
 
 
-    def build_slider(self, min_val, max_val):
+    def build_slider(self, current, max_val):
         slider = QSlider(Qt.Horizontal, self)
         slider.setFixedSize(QSize(*self.slider_dims))
         slider.setTickPosition(QSlider.TicksBelow)
-        slider.setMinimum(min_val)
+        slider.setMinimum(0)
         slider.setMaximum(max_val)
-        slider.valueChanged.connect(self.update_parameters)
+        slider.setValue(current)
+        slider.valueChanged.connect(self.update_from_parameters)
+        slider.update
         return slider   
 
     def build_label(self, name):
         label = QLabel()
         label.setText(name)
         label.setFixedSize(*self.label_dims)
+        label.setStyleSheet("QLabel {color: #858585};")
         return label
 
-    def update_parameters(self):
+    def update_from_parameters(self):
         for key, slider in zip(self.parameters.keys(), self.sliders):
             self.parameters[key] = slider.value()
 
@@ -178,7 +245,7 @@ class MainWindow(QMainWindow):
         # ... fill them with widgets ...
 
         self.upper_container.addWidget(self.feed_display)
-        self.upper_container.addWidget(self.angle_display)
+        self.upper_container.addWidget(self.angle_canvas)
 
         self.object_1_N.addWidget(self.object_1_display)
         for slider, label in zip(self.sliders[:6], self.slider_labels[:6]):
