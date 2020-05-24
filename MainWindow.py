@@ -49,6 +49,7 @@ class MainWindow(QMainWindow):
         self.NB_SHOWN = 100
         self.angles = [0] * self.NB_SHOWN
         self.last_direction_right = True
+        self.last_quadrant = 0
         self.t = list(range(self.NB_SHOWN)) 
 
     def process_frame(self):
@@ -100,13 +101,15 @@ class MainWindow(QMainWindow):
         if is_left_locked and is_right_locked:
             line_thickness = 2
 
-            cv2.putText(bigger_left, "locked", (50, 70), cv2.FONT_HERSHEY_PLAIN, 4, (0,255,0), 2)
 
             cx, cy, theta = self.get_angle(lx, ly, rx, ry)
+
 
             cv2.line(bigger_left, (lx, ly), (rx, ry), (0,0,255), line_thickness)
 
             cv2.circle(bigger_left, (cx, cy), 5, (0,0,255), line_thickness)
+
+            cv2.putText(bigger_left, "locked", (50, 70), cv2.FONT_HERSHEY_PLAIN, 4, (0,255,0), 2)
 
         else: 
             theta = 0.0
@@ -146,18 +149,24 @@ class MainWindow(QMainWindow):
         ]
 
         theta = math.degrees(math.asin(rel_y/length))
-        # theta = -(360.0 - theta) if self.last_direction_right else theta
+
+        # TODO: calibrate this
+
+        # mult = -1.0 if self.last_direction_right else 1.0 
 
         # if quadrants[0]:
-        #     if 
-        # elif quadrants[1]:
-        #     theta = -(360.0 - theta) if self.last_direction_right else theta
-        # elif quadrants[2]:
-        #     theta = -(360.0 - theta) if self.last_direction_right else theta
-        # else:
-        #     theta = -(360.0 - theta) if self.last_direction_right else theta
+        #     theta = -360.0 - theta if self.last_direction_right else theta
+        #     self.last_direction_right = False if (self.last_direction_right and self.last_quadrant == 3) else True
 
-        # self.last_direction_right = not ()
+        # elif quadrants[1]:
+        #     theta = (180.0 - theta) * mult 
+
+        # elif quadrants[2]:
+        #     theta = (180.0 + theta) * mult
+
+        # else:
+        #     theta = 360.0 - theta if not self.last_direction_right else theta
+        #     self.last_direction_right = True if (not self.last_direction_right and self.last_quadrant == 0) else False
 
 
         return center_x, center_y, theta
