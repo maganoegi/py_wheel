@@ -8,6 +8,7 @@ from Display import Display
 
 import sys
 import time
+import math
 
 import cv2
 import numpy as np
@@ -47,8 +48,8 @@ class MainWindow(QMainWindow):
        
         self.NB_SHOWN = 100
         self.angles = [0] * self.NB_SHOWN
+        self.last_direction_right = True
         self.t = list(range(self.NB_SHOWN)) 
-        # self.y = []
 
     def process_frame(self):
 
@@ -76,20 +77,45 @@ class MainWindow(QMainWindow):
         left = cv2.bitwise_and(smaller,smaller, mask=left_mask)
         right = cv2.bitwise_and(smaller,smaller, mask=right_mask)
 
-        # num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(cv2.cvtColor(left, cv2.COLOR_RGB2GRAY), 4, cv2.CV_32S)
-        # # num_labels, labels = cv2.connectedComponents(cv2.cvtColor(left, cv2.COLOR_RGB2GRAY))
-        # areas = stats[:,4]
-        # label_numbers = [i for i in range(num_labels)]
-        # labels_ranked_by_area = sorted(zip(areas, label_numbers))
-        # highest_area_label = labels_ranked_by_area[-2][1] # because the biggest one is the BG
+        bigger_left = cv2.resize(left, self.big_display_dims, interpolation=cv2.INTER_LINEAR)
+        bigger_right = cv2.resize(right, self.big_display_dims, interpolation=cv2.INTER_LINEAR)
 
-        # brain = np.where(labels == highest_area_label, labels, 0)
-        # brain = np.uint8(brain) # dilatation doesnt support uint32 produced before 
-        # print(num_labels)
+        # TEST
+        line_thickness = 2
 
-        both = cv2.resize(cv2.bitwise_or(left, right), self.big_display_dims, interpolation=cv2.INTER_LINEAR)
+        lx, ly = self.get_shape_coord(bigger_left)
+        rx, ry = self.get_shape_coord(bigger_right)
 
-        self.build_plot()
+        is_left_locked = lx != None and ly != None
+        is_right_locked = rx != None and ry != None
+
+        # if is_left_locked:
+        #     cv2.line(left, (0, ly), (lx, ly), (0,255,0), line_thickness)
+        #     cv2.line(left, (lx, 0), (lx, ly), (0,255,0), line_thickness)
+        
+        # if is_right_locked:
+        #     cv2.line(right, (0, ry), (rx, ry), (255,0,0), line_thickness)
+        #     cv2.line(right, (rx, 0), (rx, ry), (255,0,0), line_thickness)
+        
+        if is_left_locked and is_right_locked:
+            line_thickness = 2
+
+            cv2.putText(bigger_left, "locked", (50, 70), cv2.FONT_HERSHEY_PLAIN, 4, (0,255,0), 2)
+
+            cx, cy, theta = self.get_angle(lx, ly, rx, ry)
+
+            cv2.line(bigger_left, (lx, ly), (rx, ry), (0,0,255), line_thickness)
+
+            cv2.circle(bigger_left, (cx, cy), 5, (0,0,255), line_thickness)
+
+        else: 
+            theta = 0.0
+
+            
+        both = cv2.bitwise_or(bigger_left, bigger_right)
+
+
+        self.build_plot(theta)
 
         self.angle_canvas.draw()
 
@@ -100,12 +126,69 @@ class MainWindow(QMainWindow):
         self.object_1_display.render(left)
 
         self.object_2_display.render(right)
-    
-    def build_plot(self):
 
-        value = random.randint(0, 10)
-        value = random.randint(0, 10)
-        self.angles.append(value)
+
+    def get_angle(self, lx, ly, rx, ry):
+
+        rel_x = rx - lx
+        rel_y = ry - ly
+
+        length = int(math.sqrt(rel_x**2 + rel_y**2))
+
+        center_x = rx - (rel_x//2) 
+        center_y = ry - (rel_y//2)
+
+        quadrants = [
+            (rel_x >= 0 and rel_y < 0),
+            (rel_x < 0 and rel_y < 0),
+            (rel_x < 0 and rel_y >= 0),
+            (rel_x >= 0 and rel_y >= 0)
+        ]
+
+        theta = math.degrees(math.asin(rel_y/length))
+        # theta = -(360.0 - theta) if self.last_direction_right else theta
+
+        # if quadrants[0]:
+        #     if 
+        # elif quadrants[1]:
+        #     theta = -(360.0 - theta) if self.last_direction_right else theta
+        # elif quadrants[2]:
+        #     theta = -(360.0 - theta) if self.last_direction_right else theta
+        # else:
+        #     theta = -(360.0 - theta) if self.last_direction_right else theta
+
+        # self.last_direction_right = not ()
+
+
+        return center_x, center_y, theta
+
+    def get_shape_coord(self, rgb_img):
+        grayscale = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2GRAY)
+        strel = cv2.getStructuringElement(cv2.MORPH_CROSS, (3,3))
+        opened = cv2.morphologyEx(grayscale, cv2.MORPH_OPEN, strel, iterations=2)
+
+        num_labels, _, stats, centroids = cv2.connectedComponentsWithStats(opened, 4, cv2.CV_32S)
+        if 1 < num_labels < 20:
+
+            areas = stats[:,4]
+            sorted_coordinates = sorted(zip(areas, centroids), key = lambda x: x[0])
+
+            main_centroid = sorted_coordinates[-2][1]
+            
+            if not any([math.isnan(main_centroid[0]), math.isnan(main_centroid[1])]):
+
+                center_x = int(main_centroid[0])
+                center_y = int(main_centroid[1])
+
+                return center_x, center_y
+        
+        return None, None
+    
+    def build_plot(self, theta):
+
+        # value = random.randint(0, 10)
+        # value = random.randint(0, 10)
+        self.angles.append(theta)
         self.t.append(len(self.angles))
         
         self.ax.clear()
@@ -207,6 +290,8 @@ class MainWindow(QMainWindow):
     def update_from_parameters(self):
         for key, slider in zip(self.parameters.keys(), self.sliders):
             self.parameters[key] = slider.value()
+
+        self.started = True
 
     def init_Layouts(self):
         """ layouts are initialized here, as well as their contents """
