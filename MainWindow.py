@@ -24,7 +24,8 @@ class MainWindow(QMainWindow):
         self.setStyleSheet("background-color: #1C1D1D;")  
         self.setWindowTitle("VISNUM Wheel Platonov")
 
-        self.capture = cv2.VideoCapture(port)
+        # self.capture = cv2.VideoCapture(port)
+        self.capture = cv2.VideoCapture('wheel_racing.avi')
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.process_frame)
@@ -148,7 +149,10 @@ class MainWindow(QMainWindow):
             (rel_x >= 0 and rel_y >= 0)
         ]
 
-        theta = math.degrees(math.asin(rel_y/length))
+        try:
+            theta = math.degrees(math.asin(rel_y/length))
+        except ZeroDivisionError:
+            theta = 0.0
 
         # TODO: calibrate this
 
