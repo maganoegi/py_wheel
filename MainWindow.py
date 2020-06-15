@@ -6,6 +6,8 @@ from PyQt5.QtCore import Qt, QSize, QTimer
 
 from Display import Display
 
+from lib import *
+
 import sys
 import time
 import math
@@ -19,22 +21,28 @@ from matplotlib.backends.backend_qt4agg import FigureCanvasQTAgg as FigureCanvas
 import random
 
 class MainWindow(QMainWindow):
-    def __init__(self, port = 0):
+    def __init__(self, is_live):
         super(MainWindow, self).__init__()
         self.setStyleSheet("background-color: #1C1D1D;")  
         self.setWindowTitle("VISNUM Wheel Platonov")
+        self.video_name = 'wheel_racing.avi'
 
-        # self.capture = cv2.VideoCapture(port)
-        self.capture = cv2.VideoCapture('wheel_racing.avi')
+        self.is_live = is_live
+        self.frame_count = 0
+        self.total_frame_count = None
+
+        if is_live:
+            V_PORT = 0
+            self.capture = cv2.VideoCapture(V_PORT)
+        else:
+            self.capture = cv2.VideoCapture(self.video_name)
+            self.total_frame_count = int(self.capture.get(cv2.CAP_PROP_FRAME_COUNT))
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.process_frame)
         self.timer.start(1000./24)
 
-        left = 320
-        top = 70
-        width = 1300
-        height = 900
+        left, top, width, height = 320, 70, 1300, 900
 
         self.setGeometry(left, top, width, height)
         self.setFixedSize(width, height)
@@ -49,158 +57,92 @@ class MainWindow(QMainWindow):
        
         self.NB_SHOWN = 100
         self.angles = [0] * self.NB_SHOWN
-        self.last_direction_right = True
-        self.last_quadrant = 0
-        self.t = list(range(self.NB_SHOWN)) 
+        self.t = list(range(self.NB_SHOWN))
+        self.started = False
+
+    def get_frame(self):
+        ret, frame = self.capture.read()
+
+        if not self.is_live:
+            self.frame_count += 1
+
+            if not ret:
+                # if an error occured while reading, reset the capture
+                # NOTE: cap.set(cv2.CV_CAP_PROP_POS_FRAMES, 0) did not work on my machine - this ensures it will work 
+
+                # save the angles recorded thus far to a file
+                angle_string = ";".join(self.angles)
+                with open("angles.txt", "w") as f:
+                    f.write(angle_string)
+
+                self.capture.release()
+                self.capture = cv2.VideoCapture(self.video_name)
+                self.frame_count = 1
+
+                _, frame = self.capture.read()
+
+        return frame
+
 
     def process_frame(self):
+        """
+        Process the current frame and update the necessary views.
+        """
 
-        _, frame = self.capture.read()
+        # extract the frame to be processed. The error-handling is included
+        frame = self.get_frame()
 
+        # convert the frame at hand to RGB, since we are using matplotlib for displaying the results
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
+        # flip the image along its vertical axis
         flipped = cv2.flip(rgb, 1)
 
-        normal = cv2.resize(flipped, self.big_display_dims, interpolation=cv2.INTER_LINEAR)
+        # normalize our input image to 2 formats: bigger and smaller. This because our UI contains screens of 2 sizes.
+        bigger = cv2.resize(flipped, self.DSPLY_DIM_BIG, interpolation=cv2.INTER_LINEAR)
+        smaller = cv2.resize(flipped, self.DSPLY_DIM_SMALL, interpolation=cv2.INTER_LINEAR)
 
-        smaller = cv2.resize(normal, self.small_display_dims, interpolation=cv2.INTER_LINEAR)
-
+        # make a copy of a "smaller" image expressed in HSV color format
         hsv_small = cv2.cvtColor(smaller, cv2.COLOR_RGB2HSV)
-        
 
-        left_min = np.array([self.parameters["hue min 1"], self.parameters["sat min 1"], self.parameters["val min 1"]])
-        left_max = np.array([self.parameters["hue max 1"], self.parameters["sat max 1"], self.parameters["val max 1"]])
-        right_min = np.array([self.parameters["hue min 2"], self.parameters["sat min 2"], self.parameters["val min 2"]])
-        right_max = np.array([self.parameters["hue max 2"], self.parameters["sat max 2"], self.parameters["val max 2"]])
-
-        left_mask = cv2.inRange(hsv_small, left_min, left_max)
-        right_mask = cv2.inRange(hsv_small, right_min, right_max)
-
-        left = cv2.bitwise_and(smaller,smaller, mask=left_mask)
-        right = cv2.bitwise_and(smaller,smaller, mask=right_mask)
-
-        bigger_left = cv2.resize(left, self.big_display_dims, interpolation=cv2.INTER_LINEAR)
-        bigger_right = cv2.resize(right, self.big_display_dims, interpolation=cv2.INTER_LINEAR)
-
-        # TEST
-        line_thickness = 2
-
-        lx, ly = self.get_shape_coord(bigger_left)
-        rx, ry = self.get_shape_coord(bigger_right)
-
-        is_left_locked = lx != None and ly != None
-        is_right_locked = rx != None and ry != None
-
-        # if is_left_locked:
-        #     cv2.line(left, (0, ly), (lx, ly), (0,255,0), line_thickness)
-        #     cv2.line(left, (lx, 0), (lx, ly), (0,255,0), line_thickness)
-        
-        # if is_right_locked:
-        #     cv2.line(right, (0, ry), (rx, ry), (255,0,0), line_thickness)
-        #     cv2.line(right, (rx, 0), (rx, ry), (255,0,0), line_thickness)
-        
-        if is_left_locked and is_right_locked:
-            line_thickness = 2
+        # process the smaller HSV image with respect to logic for the image on the left and on the right. The difference is which HSV value range masks are applied.
+        # this creates 2 images, left and right, preparing it for being displayed.
+        left = hsv_transform(
+                    is_left=True, 
+                    img=smaller,
+                    hsv_img=hsv_small,
+                    parameters=self.parameters)
 
 
-            cx, cy, theta = self.get_angle(lx, ly, rx, ry)
+        right = hsv_transform(
+                    is_left=False, 
+                    img=smaller,
+                    hsv_img=hsv_small,
+                    parameters=self.parameters)
 
 
-            cv2.line(bigger_left, (lx, ly), (rx, ry), (0,0,255), line_thickness)
+        # resize the left and right images for analysis, merging and displaying on a bigger screen
+        bigL = cv2.resize(left, self.DSPLY_DIM_BIG, interpolation=cv2.INTER_LINEAR)
+        bigR = cv2.resize(right, self.DSPLY_DIM_BIG, interpolation=cv2.INTER_LINEAR)
 
-            cv2.circle(bigger_left, (cx, cy), 5, (0,0,255), line_thickness)
+        # combine the center window, containing the merged smaller windows and subsequent analysis
+        LR_combined, theta = analyze_detection(bigL, bigR, self.started)
 
-            cv2.putText(bigger_left, "locked", (50, 70), cv2.FONT_HERSHEY_PLAIN, 4, (0,255,0), 2)
-
-        else: 
-            theta = 0.0
-
-            
-        both = cv2.bitwise_or(bigger_left, bigger_right)
+        # draw the display contents for this frame
+        self.update_view(theta, bigger, LR_combined, left, right)
 
 
+    def update_view(self, theta, bigger, LR_combined, left, right):
         self.build_plot(theta)
-
         self.angle_canvas.draw()
-
-        self.feed_display.render(normal)
-
-        self.object_both_display.render(both)
-
+        self.feed_display.render(bigger)
+        self.object_both_display.render(LR_combined)
         self.object_1_display.render(left)
-
         self.object_2_display.render(right)
 
-
-    def get_angle(self, lx, ly, rx, ry):
-
-        rel_x = rx - lx
-        rel_y = ry - ly
-
-        length = int(math.sqrt(rel_x**2 + rel_y**2))
-
-        center_x = rx - (rel_x//2) 
-        center_y = ry - (rel_y//2)
-
-        quadrants = [
-            (rel_x >= 0 and rel_y < 0),
-            (rel_x < 0 and rel_y < 0),
-            (rel_x < 0 and rel_y >= 0),
-            (rel_x >= 0 and rel_y >= 0)
-        ]
-
-        try:
-            theta = math.degrees(math.asin(rel_y/length))
-        except ZeroDivisionError:
-            theta = 0.0
-
-        # TODO: calibrate this
-
-        # mult = -1.0 if self.last_direction_right else 1.0 
-
-        # if quadrants[0]:
-        #     theta = -360.0 - theta if self.last_direction_right else theta
-        #     self.last_direction_right = False if (self.last_direction_right and self.last_quadrant == 3) else True
-
-        # elif quadrants[1]:
-        #     theta = (180.0 - theta) * mult 
-
-        # elif quadrants[2]:
-        #     theta = (180.0 + theta) * mult
-
-        # else:
-        #     theta = 360.0 - theta if not self.last_direction_right else theta
-        #     self.last_direction_right = True if (not self.last_direction_right and self.last_quadrant == 0) else False
-
-
-        return center_x, center_y, theta
-
-    def get_shape_coord(self, rgb_img):
-        grayscale = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2GRAY)
-        strel = cv2.getStructuringElement(cv2.MORPH_CROSS, (3,3))
-        opened = cv2.morphologyEx(grayscale, cv2.MORPH_OPEN, strel, iterations=2)
-
-        num_labels, _, stats, centroids = cv2.connectedComponentsWithStats(opened, 4, cv2.CV_32S)
-        if 1 < num_labels < 20:
-
-            areas = stats[:,4]
-            sorted_coordinates = sorted(zip(areas, centroids), key = lambda x: x[0])
-
-            main_centroid = sorted_coordinates[-2][1]
-            
-            if not any([math.isnan(main_centroid[0]), math.isnan(main_centroid[1])]):
-
-                center_x = int(main_centroid[0])
-                center_y = int(main_centroid[1])
-
-                return center_x, center_y
-        
-        return None, None
     
     def build_plot(self, theta):
-
-        # value = random.randint(0, 10)
-        # value = random.randint(0, 10)
+        """ handles the angle plot logic: the data we actually display, and the way we present it """
         self.angles.append(theta)
         self.t.append(len(self.angles))
         
@@ -212,20 +154,22 @@ class MainWindow(QMainWindow):
 
     def init_UIElements(self):
         """ UI elements are initialized here, as well as their initial states """
-        self.label_dims = (50, 30)
-        self.slider_dims = (250, 30)
-        self.big_display_dims = (640, 480)
+        self.LBL_DIM = (50, 30)
+        self.SLIDER_DIM = (250, 30)
+        self.DSPLY_DIM_BIG = (640, 480)
         scaling_factor = 0.5
-        self.small_display_dims = tuple([int(dim * scaling_factor) for dim in self.big_display_dims])
+        self.DSPLY_DIM_SMALL = tuple([int(dim * scaling_factor) for dim in self.DSPLY_DIM_BIG])
 
         self.letterColor = "cornflowerblue"
 
-        self.feed_display = Display(*self.big_display_dims)
-        self.angle_display = Display(*self.big_display_dims)
-        self.object_both_display = Display(*self.big_display_dims)
-        self.object_1_display = Display(*self.small_display_dims)
-        self.object_2_display = Display(*self.small_display_dims)
+        self.feed_display = Display(*self.DSPLY_DIM_BIG)
+        self.object_both_display = Display(*self.DSPLY_DIM_BIG)
+        self.object_1_display = Display(*self.DSPLY_DIM_SMALL)
+        self.object_2_display = Display(*self.DSPLY_DIM_SMALL)
 
+        # This part of the code might seem confusing, and it is... 
+        # my goal was to experiment with dictionary and list comprehensions to provide a more dynamic initialization and reading. 
+        # It is written around a format that I defined for my "parameters"/HSV slider values. Then, I exploited the patterns I spotted in this format to initialize the thing.
         self.slider_names = [
             "hue min",
             "hue max",
@@ -244,38 +188,8 @@ class MainWindow(QMainWindow):
             (255, 255)
         ]
 
-
         self.slider_labels = [self.build_label(name) for name in (self.slider_names + self.slider_names)]
         self.sliders = [self.build_slider(*current_max) for current_max in (self.slider_default_max + self.slider_default_max)]
-        grad = """QSlider::sub-page:horizontal {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #FF0000, stop:0.2 #fff200 stop:0.4 #00FF00, stop:0.6 #00ffeb stop:0.8 #0000FF, stop:1 #ff00f2);
-            }
-            QSlider::add-page:horizontal {
-                background: lightgray;
-                }
-            """
-        # self.sliders[0].setStyleSheet(grad)
-        # self.sliders[0].setStyleSheet(grad)
-#             """QSlider::groove:horizontal {
-#     border: 1px solid red;
-#     height: 6px;
-#     margin: 2px 0;
-# border-radius: 3px;
-# }
-# QSlider::handle:horizontal {
-#     background: red;
-#     border: 1px solid red;
-#     width: 3px;
-#     margin: -8px 0;
-#     border-radius: 1px;
-# }
-# QSlider::add-page:horizontal {
-#     background: lightgray;
-# }
-# QSlider::sub-page:horizontal {
-#     background: red;
-# }""") 
-
         self.figure = plt.figure(figsize=(10,5))
         self.ax = self.figure.add_subplot(111)
 
@@ -283,28 +197,34 @@ class MainWindow(QMainWindow):
 
 
     def build_slider(self, current, max_val):
+        """ builds sliders with a specified, uniform format """
         slider = QSlider(Qt.Horizontal, self)
-        slider.setFixedSize(QSize(*self.slider_dims))
+        slider.setFixedSize(QSize(*self.SLIDER_DIM))
         slider.setTickPosition(QSlider.TicksBelow)
         slider.setMinimum(0)
         slider.setMaximum(max_val)
         slider.setValue(current)
-        slider.valueChanged.connect(self.update_from_parameters)
+        slider.valueChanged.connect(self.update_parameters)
         slider.update
         return slider   
 
     def build_label(self, name):
+        """ builds labels with a specified, uniform format """
         label = QLabel()
         label.setText(name)
-        label.setFixedSize(*self.label_dims)
+        label.setFixedSize(*self.LBL_DIM)
         label.setStyleSheet("QLabel {color: #858585};")
         return label
 
-    def update_from_parameters(self):
+    def update_parameters(self):
+        """ 
+        Updates the HSV parameters depending on the corresponding slider values. 
+        This is triggered on value update. 
+        The parameters are read in image processing.
+        """
+        self.started = True
         for key, slider in zip(self.parameters.keys(), self.sliders):
             self.parameters[key] = slider.value()
-
-        self.started = True
 
     def init_Layouts(self):
         """ layouts are initialized here, as well as their contents """
