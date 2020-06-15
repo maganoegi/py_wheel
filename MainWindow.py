@@ -36,7 +36,6 @@ class MainWindow(QMainWindow):
             self.capture = cv2.VideoCapture(V_PORT)
         else:
             self.capture = cv2.VideoCapture(self.video_name)
-            self.total_frame_count = int(self.capture.get(cv2.CAP_PROP_FRAME_COUNT))
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.process_frame)
@@ -47,6 +46,7 @@ class MainWindow(QMainWindow):
         self.setGeometry(left, top, width, height)
         self.setFixedSize(width, height)
 
+
         self.init_UIElements()
         self.init_Layouts()
 
@@ -54,26 +54,30 @@ class MainWindow(QMainWindow):
         for i in range(2):
             for index, name in enumerate(self.slider_names):
                 self.parameters[f"{name} {i + 1}"]  = self.slider_default_max[index][index%2]
+                
+        self.update_parameters()
        
         self.NB_SHOWN = 100
         self.angles = [0] * self.NB_SHOWN
         self.t = list(range(self.NB_SHOWN))
-        self.started = False
+        # default tracking without touching the sliders if video playing. 
+        # Otherwise you have to start tuning in order for the algorithm to start detecting
+        self.started = not self.is_live
 
     def get_frame(self):
         ret, frame = self.capture.read()
 
         if not self.is_live:
             self.frame_count += 1
-
             if not ret:
                 # if an error occured while reading, reset the capture
                 # NOTE: cap.set(cv2.CV_CAP_PROP_POS_FRAMES, 0) did not work on my machine - this ensures it will work 
 
                 # save the angles recorded thus far to a file
-                angle_string = ";".join(self.angles)
+                angle_string = ";".join(map(str, self.angles))
                 with open("angles.txt", "w") as f:
                     f.write(angle_string)
+                    f.close()
 
                 self.capture.release()
                 self.capture = cv2.VideoCapture(self.video_name)
@@ -95,7 +99,7 @@ class MainWindow(QMainWindow):
         # convert the frame at hand to RGB, since we are using matplotlib for displaying the results
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        # flip the image along its vertical axis
+        # flip the image along its vertical axis to have a mirror image
         flipped = cv2.flip(rgb, 1)
 
         # normalize our input image to 2 formats: bigger and smaller. This because our UI contains screens of 2 sizes.
@@ -188,8 +192,28 @@ class MainWindow(QMainWindow):
             (255, 255)
         ]
 
+        self.slider_default_video = [ # hard coded init values for video tracking (avoids manual tuning for evaluation)
+            (175, 255),
+            (184, 255),
+            (247, 255),
+            (255, 255),
+            (102, 255),
+            (255, 255),
+            (21, 255),
+            (42, 255),
+            (218, 255),
+            (255, 255),
+            (84, 255),
+            (255, 255)
+        ]
+
         self.slider_labels = [self.build_label(name) for name in (self.slider_names + self.slider_names)]
-        self.sliders = [self.build_slider(*current_max) for current_max in (self.slider_default_max + self.slider_default_max)]
+
+        if self.is_live:
+            self.sliders = [self.build_slider(*current_max) for current_max in (self.slider_default_max + self.slider_default_max)]
+        else:
+            self.sliders = [self.build_slider(*current_max) for current_max in self.slider_default_video]
+
         self.figure = plt.figure(figsize=(10,5))
         self.ax = self.figure.add_subplot(111)
 
@@ -225,6 +249,7 @@ class MainWindow(QMainWindow):
         self.started = True
         for key, slider in zip(self.parameters.keys(), self.sliders):
             self.parameters[key] = slider.value()
+        
 
     def init_Layouts(self):
         """ layouts are initialized here, as well as their contents """

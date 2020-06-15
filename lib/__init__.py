@@ -114,7 +114,6 @@ def analyze_detection(left, right, is_started):
     is_left_locked = lx != None and ly != None
     is_right_locked = rx != None and ry != None
     valid_4_tracking = is_left_locked and is_right_locked
-
         
     if valid_4_tracking and is_started:
         line_thickness = 2
